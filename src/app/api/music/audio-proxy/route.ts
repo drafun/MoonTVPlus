@@ -70,6 +70,22 @@ export async function GET(request: NextRequest) {
 
     // 检查是否有 Range 请求头
     const range = request.headers.get('range');
+    const ifNoneMatch = request.headers.get('if-none-match');
+    const ifModifiedSince = request.headers.get('if-modified-since');
+
+    // 生成基于文件路径的 ETag
+    const generatedETag = `"${Buffer.from(audioPath).toString('base64')}"`;
+
+    // 如果客户端发送了 If-None-Match，检查是否匹配
+    if (ifNoneMatch && ifNoneMatch === generatedETag) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'ETag': generatedETag,
+        },
+      });
+    }
 
     // 构建上游请求头
     const upstreamHeaders: Record<string, string> = {
@@ -81,10 +97,29 @@ export async function GET(request: NextRequest) {
       upstreamHeaders['Range'] = range;
     }
 
+    // 转发条件请求头到上游
+    if (ifNoneMatch) {
+      upstreamHeaders['If-None-Match'] = ifNoneMatch;
+    }
+    if (ifModifiedSince) {
+      upstreamHeaders['If-Modified-Since'] = ifModifiedSince;
+    }
+
     // 从OpenList获取音频流
     const response = await fetch(fileResponse.data.raw_url, {
       headers: upstreamHeaders,
     });
+
+    // 如果上游返回 304 Not Modified，直接返回 304
+    if (response.status === 304) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'ETag': generatedETag,
+        },
+      });
+    }
 
     if (!response.ok && response.status !== 206) {
       return NextResponse.json(
@@ -98,6 +133,8 @@ export async function GET(request: NextRequest) {
     const contentLength = response.headers.get('content-length');
     const contentRange = response.headers.get('content-range');
     const acceptRanges = response.headers.get('accept-ranges');
+    const etag = response.headers.get('etag');
+    const lastModified = response.headers.get('last-modified');
 
     // 创建响应头 - 设置永久缓存
     const headers: Record<string, string> = {
@@ -115,6 +152,19 @@ export async function GET(request: NextRequest) {
     // 如果上游返回了 Content-Range，转发给客户端
     if (contentRange) {
       headers['Content-Range'] = contentRange;
+    }
+
+    // 转发 ETag 和 Last-Modified 以支持浏览器缓存验证
+    if (etag) {
+      headers['ETag'] = etag;
+    }
+    if (lastModified) {
+      headers['Last-Modified'] = lastModified;
+    }
+
+    // 如果上游没有提供 ETag，使用生成的 ETag
+    if (!etag) {
+      headers['ETag'] = generatedETag;
     }
 
     // 返回音频流，保持原始状态码（200 或 206）
