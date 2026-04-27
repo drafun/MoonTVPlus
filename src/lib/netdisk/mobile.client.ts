@@ -221,48 +221,57 @@ export async function getMobileSharePlayUrl(contentId: string, linkID: string, a
     },
   };
 
-  const authCandidates = authorization ? [undefined, authorization] : [undefined];
   let lastErrorMessage = '未获取到移动云盘播放地址';
 
-  for (const auth of authCandidates) {
-    try {
-      const raw = await postPlain(
-        `${BASE_URL}getContentInfoFromOutLink`,
-        requestPayload,
-        false,
-        auth
-      );
-      let parsed: any;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        lastErrorMessage = '移动云盘播放接口返回异常';
-        continue;
-      }
+  try {
+    const response = await fetch(`${BASE_URL}getContentInfoFromOutLink`, {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Content-Type': 'application/json',
+        ...(authorization ? { authorization: ensureHeaderSafeAuthorization(authorization) } : {}),
+      },
+      body: JSON.stringify(requestPayload),
+      cache: 'no-store',
+    });
 
-      const contentInfo = parsed?.data?.contentInfo || parsed?.contentInfo;
-      const playUrl =
-        contentInfo?.presentURL ||
-        contentInfo?.presentUrl ||
-        contentInfo?.playUrl ||
-        contentInfo?.url ||
-        parsed?.data?.presentURL ||
-        parsed?.data?.url;
-
-      if (playUrl) {
-        return playUrl;
-      }
-
-      lastErrorMessage =
-        parsed?.message ||
-        parsed?.msg ||
-        parsed?.data?.message ||
-        parsed?.data?.msg ||
-        '未获取到移动云盘播放地址';
-    } catch (error) {
-      lastErrorMessage =
-        error instanceof Error ? error.message : '未获取到移动云盘播放地址';
+    const raw = await response.text();
+    if (!response.ok) {
+      throw new Error(`移动云盘播放接口请求失败 (${response.status})`);
     }
+
+    let parsed: any;
+    try {
+      parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch {
+      throw new Error('移动云盘播放接口返回异常');
+    }
+
+    const playUrl =
+      parsed?.data?.contentInfo?.presentURL ||
+      parsed?.data?.contentInfo?.presentUrl ||
+      parsed?.data?.contentInfo?.playUrl ||
+      parsed?.data?.contentInfo?.url ||
+      parsed?.contentInfo?.presentURL ||
+      parsed?.contentInfo?.presentUrl ||
+      parsed?.data?.presentURL ||
+      parsed?.data?.url;
+
+    if (playUrl) {
+      return playUrl;
+    }
+
+    lastErrorMessage =
+      parsed?.message ||
+      parsed?.msg ||
+      parsed?.data?.message ||
+      parsed?.data?.msg ||
+      '未获取到移动云盘播放地址';
+  } catch (error) {
+    lastErrorMessage =
+      error instanceof Error ? error.message : '未获取到移动云盘播放地址';
   }
 
   throw new Error(lastErrorMessage);
